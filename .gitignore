@@ -1,0 +1,19 @@
+# Artefatos de build do Cargo
+/target/
+debug/
+
+# Backups do rustfmt
+**/*.rs.bk
+
+# Símbolos de debug do MSVC
+*.pdb
+
+# Snapshots pendentes do insta
+*.snap.new
+*.pending-snap
+
+# macOS
+.DS_Store
+
+# Documentos privados, não vão a público
+docs_local/

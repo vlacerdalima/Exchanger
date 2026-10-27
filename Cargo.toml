@@ -1,0 +1,16 @@
+[package]
+name = "matching-engine"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.104"
+
+[dev-dependencies]
+insta = "1.49.0"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+unwrap_used = "warn"

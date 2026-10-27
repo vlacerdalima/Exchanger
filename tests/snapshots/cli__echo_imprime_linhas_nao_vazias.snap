@@ -1,0 +1,7 @@
+---
+source: tests/cli.rs
+expression: "String::from_utf8_lossy(&output.stdout)"
+---
+primeira linha
+segunda linha
+terceira linha
