@@ -1,0 +1,8 @@
+---
+source: tests/cli.rs
+expression: "String::from_utf8_lossy(&output.stderr)"
+---
+line 5: price '1.234' has more than 2 decimal places
+line 6: unknown side 'BUY' (use BID or ASK)
+line 7: expected '@', found '#'
+line 8: expected 4 tokens (SIDE QTY @ PRICE), found 3

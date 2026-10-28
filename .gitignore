@@ -1,19 +1,19 @@
-# Artefatos de build do Cargo
+# Cargo build artifacts
 /target/
 debug/
 
-# Backups do rustfmt
+# rustfmt backups
 **/*.rs.bk
 
-# Símbolos de debug do MSVC
+# MSVC debug symbols
 *.pdb
 
-# Snapshots pendentes do insta
+# Pending insta snapshots
 *.snap.new
 *.pending-snap
 
 # macOS
 .DS_Store
 
-# Documentos privados, não vão a público
+# Private documents, not to be published
 docs_local/

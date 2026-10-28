@@ -1,16 +1,13 @@
 use std::process::Command;
 
 #[test]
-fn echo_imprime_linhas_nao_vazias() {
+fn parser_prints_orders_and_errors() {
     let output = Command::new(env!("CARGO_BIN_EXE_matching-engine"))
-        .arg(concat!(env!("CARGO_MANIFEST_DIR"), "/examples/echo.txt"))
+        .arg(concat!(env!("CARGO_MANIFEST_DIR"), "/examples/parser.txt"))
         .output()
-        .expect("falha ao executar o binário");
+        .expect("failed to run the binary");
 
-    assert!(
-        output.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    insta::assert_snapshot!(String::from_utf8_lossy(&output.stdout));
+    assert!(output.status.success());
+    insta::assert_snapshot!("stdout", String::from_utf8_lossy(&output.stdout));
+    insta::assert_snapshot!("stderr", String::from_utf8_lossy(&output.stderr));
 }

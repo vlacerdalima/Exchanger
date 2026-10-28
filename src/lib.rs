@@ -1,5 +1,7 @@
-//! Matching engine de um único mercado: recebe uma sequência de comandos e
-//! devolve uma sequência de eventos.
+//! Single-market matching engine: takes a sequence of commands and returns a
+//! sequence of events.
+
+pub mod parser;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Side {
