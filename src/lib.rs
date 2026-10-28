@@ -39,15 +39,19 @@ impl Order {
     }
 }
 
-// TODO: remove once the operations exist.
-#[allow(dead_code)]
+// Queue entry of a price level; side and price come from the structure, so they are not stored.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RestingOrder {
+    id: Id,
+    qt: Qt,
+}
+
 #[derive(Debug, Clone)]
 pub struct OrderBook {
-    bids: BTreeMap<Price, VecDeque<Order>>,
-    asks: BTreeMap<Price, VecDeque<Order>>,
+    bids: BTreeMap<Price, VecDeque<RestingOrder>>,
+    asks: BTreeMap<Price, VecDeque<RestingOrder>>,
     // Support index, positioned by Id.0; None = order that already left the book.
     index: Vec<Option<(Side, Price)>>,
-    next_id: u64,
 }
 
 impl OrderBook {
@@ -56,8 +60,25 @@ impl OrderBook {
             bids: BTreeMap::new(),
             asks: BTreeMap::new(),
             index: Vec::new(),
-            next_id: 0,
         }
+    }
+
+    /// Puts the order in the book without trying to match it and without validating it.
+    ///
+    /// Validation and the `Result` return type come later; this becomes private once
+    /// matching exists.
+    pub fn insert(&mut self, side: Side, price: Price, qt: Qt) -> Id {
+        let id = Id(self.index.len() as u64);
+        let levels = match side {
+            Side::Buy => &mut self.bids,
+            Side::Sell => &mut self.asks,
+        };
+        levels
+            .entry(price)
+            .or_default()
+            .push_back(RestingOrder { id, qt });
+        self.index.push(Some((side, price)));
+        id
     }
 }
 
