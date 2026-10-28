@@ -2,7 +2,7 @@
 source: tests/cli.rs
 expression: "String::from_utf8_lossy(&output.stdout)"
 ---
-Order { side: Buy, price: Price(500), qt: Qt(10) }
-Order { side: Sell, price: Price(110), qt: Qt(3) }
-Order { side: Buy, price: Price(29), qt: Qt(7) }
-Order { side: Sell, price: Price(0), qt: Qt(0) }
+(Buy, Price(500), Qt(10))
+(Sell, Price(110), Qt(3))
+(Buy, Price(29), Qt(7))
+(Sell, Price(0), Qt(0))

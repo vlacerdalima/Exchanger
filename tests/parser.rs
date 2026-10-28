@@ -1,45 +1,45 @@
 use matching_engine::parser::{ParseError, parse_line};
-use matching_engine::{Order, Price, Qt, Side};
+use matching_engine::{Price, Qt, Side};
 
-fn order(side: Side, price: u64, qt: u64) -> Order {
-    Order::new(side, Price(price), Qt(qt))
+fn parsed(side: Side, price: u64, qt: u64) -> (Side, Price, Qt) {
+    (side, Price(price), Qt(qt))
 }
 
 #[test]
 fn integer_price_becomes_cents() {
-    assert_eq!(parse_line("BID 10 @ 5"), Ok(order(Side::Buy, 500, 10)));
+    assert_eq!(parse_line("BID 10 @ 5"), Ok(parsed(Side::Buy, 500, 10)));
 }
 
 #[test]
 fn ask_becomes_sell() {
-    assert_eq!(parse_line("ASK 3 @ 1.1"), Ok(order(Side::Sell, 110, 3)));
+    assert_eq!(parse_line("ASK 3 @ 1.1"), Ok(parsed(Side::Sell, 110, 3)));
 }
 
 #[test]
 fn price_with_two_decimal_places() {
-    assert_eq!(parse_line("BID 1 @ 1.10"), Ok(order(Side::Buy, 110, 1)));
-    assert_eq!(parse_line("ASK 1 @ 0.29"), Ok(order(Side::Sell, 29, 1)));
-    assert_eq!(parse_line("BID 1 @ 0.05"), Ok(order(Side::Buy, 5, 1)));
+    assert_eq!(parse_line("BID 1 @ 1.10"), Ok(parsed(Side::Buy, 110, 1)));
+    assert_eq!(parse_line("ASK 1 @ 0.29"), Ok(parsed(Side::Sell, 29, 1)));
+    assert_eq!(parse_line("BID 1 @ 0.05"), Ok(parsed(Side::Buy, 5, 1)));
 }
 
 #[test]
 fn extra_whitespace_is_tolerated() {
     assert_eq!(
         parse_line("  BID   10 \t@  5  "),
-        Ok(order(Side::Buy, 500, 10))
+        Ok(parsed(Side::Buy, 500, 10))
     );
 }
 
 #[test]
 fn zero_passes_the_parser() {
-    assert_eq!(parse_line("BID 0 @ 0"), Ok(order(Side::Buy, 0, 0)));
+    assert_eq!(parse_line("BID 0 @ 0"), Ok(parsed(Side::Buy, 0, 0)));
 }
 
 #[test]
 fn largest_representable_price() {
     assert_eq!(
         parse_line("BID 1 @ 184467440737095516.15"),
-        Ok(order(Side::Buy, u64::MAX, 1))
+        Ok(parsed(Side::Buy, u64::MAX, 1))
     );
 }
 

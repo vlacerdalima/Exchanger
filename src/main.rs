@@ -15,7 +15,7 @@ fn main() -> Result<()> {
         }
 
         match parse_line(line) {
-            Ok(order) => println!("{order:?}"),
+            Ok(parsed) => println!("{parsed:?}"),
             Err(error) => eprintln!("line {}: {error}", index + 1),
         }
     }

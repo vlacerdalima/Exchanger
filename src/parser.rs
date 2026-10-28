@@ -5,7 +5,7 @@
 
 use std::fmt;
 
-use crate::{Order, Price, Qt, Side};
+use crate::{Price, Qt, Side};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParseError {
@@ -40,11 +40,13 @@ impl fmt::Display for ParseError {
 
 impl std::error::Error for ParseError {}
 
-/// Converts a `BID|ASK QTY @ PRICE` line into an [`Order`].
+/// Parses a `BID|ASK QTY @ PRICE` line into its side, price and quantity.
+///
+/// Building the [`Order`](crate::Order), including its id, is up to the caller.
 ///
 /// The price accepts up to 2 decimal places and is stored in cents:
 /// `5` becomes `Price(500)` and `1.1` becomes `Price(110)`.
-pub fn parse_line(line: &str) -> Result<Order, ParseError> {
+pub fn parse_line(line: &str) -> Result<(Side, Price, Qt), ParseError> {
     let tokens: Vec<&str> = line.split_whitespace().collect();
     let [side, qt, at, price] = tokens[..] else {
         return Err(ParseError::WrongTokenCount {
@@ -59,7 +61,7 @@ pub fn parse_line(line: &str) -> Result<Order, ParseError> {
     }
     let price = parse_price(price)?;
 
-    Ok(Order::new(side, price, qt))
+    Ok((side, price, qt))
 }
 
 fn parse_side(token: &str) -> Result<Side, ParseError> {
