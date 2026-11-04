@@ -41,9 +41,21 @@ impl Order {
 
 // Queue entry of a price level; side and price come from the structure, so they are not stored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct RestingOrder {
+pub struct RestingOrder {
     id: Id,
     qt: Qt,
+}
+
+impl RestingOrder {
+    /// Id of the order.
+    pub fn id(&self) -> Id {
+        self.id
+    }
+
+    /// Remaining quantity of the order.
+    pub fn qt(&self) -> Qt {
+        self.qt
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -79,6 +91,29 @@ impl OrderBook {
             .push_back(RestingOrder { id, qt });
         self.index.push(Some((side, price)));
         id
+    }
+
+    /// Best buy level (highest price) and the first order in its queue.
+    pub fn best_bid(&self) -> Option<(Price, RestingOrder)> {
+        self.bids
+            .last_key_value()
+            .and_then(|(price, queue)| queue.front().map(|order| (*price, *order)))
+    }
+
+    /// Best sell level (lowest price) and the first order in its queue.
+    pub fn best_ask(&self) -> Option<(Price, RestingOrder)> {
+        self.asks
+            .first_key_value()
+            .and_then(|(price, queue)| queue.front().map(|order| (*price, *order)))
+    }
+
+    /// Orders at the given side and price, oldest first; empty if the level does not exist.
+    pub fn level(&self, side: Side, price: Price) -> impl Iterator<Item = &RestingOrder> {
+        let levels = match side {
+            Side::Buy => &self.bids,
+            Side::Sell => &self.asks,
+        };
+        levels.get(&price).into_iter().flatten()
     }
 }
 
