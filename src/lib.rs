@@ -1,7 +1,7 @@
 //! Single-market matching engine: takes a sequence of commands and returns a
 //! sequence of events.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, VecDeque, btree_map::OccupiedEntry};
 
 pub mod parser;
 
@@ -58,6 +58,15 @@ impl RestingOrder {
     }
 }
 
+// One trade per maker/taker pair; `price` is always the maker's price.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Trade {
+    pub maker: Id,
+    pub taker: Id,
+    pub price: Price,
+    pub qt: Qt,
+}
+
 #[derive(Debug, Clone)]
 pub struct OrderBook {
     bids: BTreeMap<Price, VecDeque<RestingOrder>>,
@@ -81,6 +90,13 @@ impl OrderBook {
     /// matching exists.
     pub fn insert(&mut self, side: Side, price: Price, qt: Qt) -> Id {
         let id = Id(self.index.len() as u64);
+        self.index.push(Some((side, price)));
+        self.rest(id, side, price, qt);
+        id
+    }
+
+    // Appends to the back of the level's queue (time priority); does not touch the index.
+    fn rest(&mut self, id: Id, side: Side, price: Price, qt: Qt) {
         let levels = match side {
             Side::Buy => &mut self.bids,
             Side::Sell => &mut self.asks,
@@ -89,8 +105,6 @@ impl OrderBook {
             .entry(price)
             .or_default()
             .push_back(RestingOrder { id, qt });
-        self.index.push(Some((side, price)));
-        id
     }
 
     /// Best buy level (highest price) and the first order in its queue.
@@ -115,10 +129,95 @@ impl OrderBook {
         };
         levels.get(&price).into_iter().flatten()
     }
+
+    /// Takes a limit order, matches it against the opposite side and rests whatever is
+    /// left in the book; returns the order's id and the trades in the order they happened.
+    pub fn submit(&mut self, side: Side, price: Price, qt: Qt) -> (Id, Vec<Trade>) {
+        let id = Id(self.index.len() as u64);
+        // Every order gets an index slot, even if it fills completely.
+        self.index.push(None);
+        let mut remaining = qt;
+        let mut trades = Vec::new();
+
+        // Match against the other side: a field borrow, so self.index stays usable.
+        let opposite = match side {
+            Side::Buy => &mut self.asks,
+            Side::Sell => &mut self.bids,
+        };
+
+        // Best price first; an empty side ends matching.
+        while let Some(mut level) = best_level(opposite, side) {
+            let level_price = *level.key();
+            // Price priority: stop at the first level that does not cross.
+            if !crosses(side, level_price, price) {
+                break;
+            }
+            let queue = level.get_mut();
+            // Defensive: an empty level should not exist; drop it instead of panicking.
+            let Some(maker) = queue.front_mut() else {
+                level.remove();
+                continue;
+            };
+            // Time priority: the oldest maker at this level fills first.
+            let fill = remaining.0.min(maker.qt.0);
+            // The maker's price is the trade price.
+            trades.push(Trade {
+                maker: maker.id,
+                taker: id,
+                price: level_price,
+                qt: Qt(fill),
+            });
+            remaining.0 -= fill;
+            maker.qt.0 -= fill;
+            if maker.qt.0 == 0 {
+                // A filled maker leaves the book and the index.
+                let maker_id = maker.id;
+                queue.pop_front();
+                if let Some(slot) = self.index.get_mut(maker_id.0 as usize) {
+                    *slot = None;
+                }
+            }
+            // No empty levels, so best_bid/best_ask stay correct.
+            if queue.is_empty() {
+                level.remove();
+            }
+            if remaining.0 == 0 {
+                break;
+            }
+        }
+
+        // Whatever is left rests at the order's own limit price.
+        if remaining.0 > 0 {
+            self.rest(id, side, price, remaining);
+            if let Some(slot) = self.index.get_mut(id.0 as usize) {
+                *slot = Some((side, price));
+            }
+        }
+        (id, trades)
+    }
 }
 
 impl Default for OrderBook {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Best level of the side a `taker` matches against: lowest ask for a buy, highest bid for a sell.
+fn best_level(
+    levels: &mut BTreeMap<Price, VecDeque<RestingOrder>>,
+    taker: Side,
+) -> Option<OccupiedEntry<'_, Price, VecDeque<RestingOrder>>> {
+    match taker {
+        Side::Buy => levels.first_entry(),
+        Side::Sell => levels.last_entry(),
+    }
+}
+
+/// Whether a `taker` with limit `limit` trades at `level_price`.
+fn crosses(taker: Side, level_price: Price, limit: Price) -> bool {
+    match taker {
+        Side::Buy => level_price <= limit,
+        Side::Sell => level_price >= limit,
     }
 }
