@@ -67,6 +67,13 @@ pub struct Trade {
     pub qt: Qt,
 }
 
+// Why an order was rejected before entering the engine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reject {
+    ZeroQuantity,
+    ZeroPrice,
+}
+
 #[derive(Debug, Clone)]
 pub struct OrderBook {
     bids: BTreeMap<Price, VecDeque<RestingOrder>>,
@@ -82,17 +89,6 @@ impl OrderBook {
             asks: BTreeMap::new(),
             index: Vec::new(),
         }
-    }
-
-    /// Puts the order in the book without trying to match it and without validating it.
-    ///
-    /// Validation and the `Result` return type come later; this becomes private once
-    /// matching exists.
-    pub fn insert(&mut self, side: Side, price: Price, qt: Qt) -> Id {
-        let id = Id(self.index.len() as u64);
-        self.index.push(Some((side, price)));
-        self.rest(id, side, price, qt);
-        id
     }
 
     // Appends to the back of the level's queue (time priority); does not touch the index.
@@ -132,7 +128,19 @@ impl OrderBook {
 
     /// Takes a limit order, matches it against the opposite side and rests whatever is
     /// left in the book; returns the order's id and the trades in the order they happened.
-    pub fn submit(&mut self, side: Side, price: Price, qt: Qt) -> (Id, Vec<Trade>) {
+    ///
+    /// An invalid order is rejected before anything else: it gets no id and leaves the
+    /// book untouched.
+    pub fn submit(&mut self, side: Side, price: Price, qt: Qt) -> Result<(Id, Vec<Trade>), Reject> {
+        // Validate first, so a rejected order consumes no id and changes no state.
+        // Quantity is checked before price.
+        if qt.0 == 0 {
+            return Err(Reject::ZeroQuantity);
+        }
+        if price.0 == 0 {
+            return Err(Reject::ZeroPrice);
+        }
+
         let id = Id(self.index.len() as u64);
         // Every order gets an index slot, even if it fills completely.
         self.index.push(None);
@@ -193,7 +201,7 @@ impl OrderBook {
                 *slot = Some((side, price));
             }
         }
-        (id, trades)
+        Ok((id, trades))
     }
 }
 
