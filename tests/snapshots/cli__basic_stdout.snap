@@ -1,0 +1,18 @@
+---
+source: tests/cli.rs
+expression: "String::from_utf8_lossy(&output.stdout)"
+---
+ACCEPTED 0
+ACCEPTED 1
+ACCEPTED 2
+ACCEPTED 3
+ACCEPTED 4
+TRADE maker=1 taker=4 qt=5 price=100.00
+TRADE maker=2 taker=4 qt=2 price=100.00
+TRADE maker=3 taker=4 qt=2 price=101.00
+CANCELLED 3 qt=1
+ACCEPTED 5
+TRADE maker=0 taker=5 qt=4 price=99.00
+REJECTED line 8: ZeroQuantity
+CANCEL_REJECTED 99: UnknownId
+CANCEL_REJECTED 0: NotInBook

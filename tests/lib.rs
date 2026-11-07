@@ -1,4 +1,4 @@
-use matching_engine::{Id, OrderBook, Price, Qt, Reject, Side, Trade};
+use matching_engine::{CancelReject, Id, OrderBook, Price, Qt, Reject, Side, Trade};
 
 // `RestingOrder` cannot be built outside the crate, so the helpers below turn it
 // into plain values that `assert_eq!` can compare.
@@ -540,4 +540,95 @@ fn rejected_order_does_not_change_book() {
         orders_at(&book, Side::Sell, Price(100)),
         vec![(Id(1), Qt(5)), (Id(2), Qt(2))]
     );
+}
+
+// cancel
+
+#[test]
+fn cancels_first_in_queue() {
+    let mut book = base_book();
+
+    assert_eq!(book.cancel(Id(1)), Ok(Qt(5)));
+
+    assert_eq!(
+        orders_at(&book, Side::Sell, Price(100)),
+        vec![(Id(2), Qt(2))]
+    );
+    assert_eq!(best_ask(&book), Some((Price(100), Id(2), Qt(2))));
+}
+
+#[test]
+fn cancel_keeps_fifo_of_the_rest() {
+    let mut book = base_book();
+    assert_eq!(place(&mut book, Side::Sell, Price(100), Qt(1)), Id(4));
+
+    assert_eq!(book.cancel(Id(2)), Ok(Qt(2)));
+
+    assert_eq!(
+        orders_at(&book, Side::Sell, Price(100)),
+        vec![(Id(1), Qt(5)), (Id(4), Qt(1))]
+    );
+}
+
+#[test]
+fn cancelling_last_order_of_level_removes_level() {
+    let mut book = base_book();
+
+    assert_eq!(book.cancel(Id(0)), Ok(Qt(4)));
+
+    assert_eq!(best_bid(&book), None);
+    assert_eq!(orders_at(&book, Side::Buy, Price(99)), vec![]);
+}
+
+#[test]
+fn cancel_partially_filled_returns_remaining() {
+    let mut book = base_book();
+    book.submit(Side::Buy, Price(101), Qt(9)).unwrap();
+
+    assert_eq!(book.cancel(Id(3)), Ok(Qt(1)));
+
+    assert_eq!(best_ask(&book), None);
+}
+
+#[test]
+fn cancel_twice() {
+    let mut book = base_book();
+
+    assert!(book.cancel(Id(1)).is_ok());
+    assert_eq!(book.cancel(Id(1)), Err(CancelReject::NotInBook));
+}
+
+#[test]
+fn cancel_filled_maker() {
+    let mut book = base_book();
+    book.submit(Side::Buy, Price(100), Qt(5)).unwrap();
+
+    assert_eq!(book.cancel(Id(1)), Err(CancelReject::NotInBook));
+}
+
+#[test]
+fn cancel_fully_filled_taker() {
+    let mut book = base_book();
+    let (id, _) = book.submit(Side::Buy, Price(100), Qt(5)).unwrap();
+    assert_eq!(id, Id(4));
+
+    assert_eq!(book.cancel(Id(4)), Err(CancelReject::NotInBook));
+}
+
+#[test]
+fn cancel_unknown_id() {
+    let mut book = base_book();
+
+    assert_eq!(book.cancel(Id(99)), Err(CancelReject::UnknownId));
+}
+
+#[test]
+fn cancelled_order_does_not_match() {
+    let mut book = base_book();
+    book.cancel(Id(1)).unwrap();
+
+    let (id, trades) = book.submit(Side::Buy, Price(100), Qt(2)).unwrap();
+
+    assert_eq!(id, Id(4));
+    assert_eq!(trades, vec![trade(2, 4, 100, 2)]);
 }

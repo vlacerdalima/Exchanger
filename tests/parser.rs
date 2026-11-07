@@ -1,8 +1,12 @@
-use matching_engine::parser::{ParseError, parse_line};
-use matching_engine::{Price, Qt, Side};
+use matching_engine::parser::{Command, ParseError, parse_line};
+use matching_engine::{Id, Price, Qt, Side};
 
-fn parsed(side: Side, price: u64, qt: u64) -> (Side, Price, Qt) {
-    (side, Price(price), Qt(qt))
+fn parsed(side: Side, price: u64, qt: u64) -> Command {
+    Command::Submit {
+        side,
+        price: Price(price),
+        qt: Qt(qt),
+    }
 }
 
 #[test]
@@ -64,7 +68,7 @@ fn unknown_side() {
     for side in ["BUY", "bid", "ask", "SELL"] {
         assert_eq!(
             parse_line(&format!("{side} 10 @ 5")),
-            Err(ParseError::UnknownSide(side.to_string()))
+            Err(ParseError::UnknownCommand(side.to_string()))
         );
     }
 }
@@ -112,5 +116,46 @@ fn more_than_two_decimal_places() {
     assert_eq!(
         parse_line("BID 1 @ 1.234"),
         Err(ParseError::TooManyDecimals("1.234".to_string()))
+    );
+}
+
+// CANCEL
+
+#[test]
+fn cancel_command() {
+    assert_eq!(parse_line("CANCEL 3"), Ok(Command::Cancel(Id(3))));
+}
+
+#[test]
+fn cancel_without_id() {
+    assert_eq!(
+        parse_line("CANCEL"),
+        Err(ParseError::WrongTokenCount { found: 1 })
+    );
+}
+
+#[test]
+fn cancel_with_extra_token() {
+    assert_eq!(
+        parse_line("CANCEL 3 4"),
+        Err(ParseError::WrongTokenCount { found: 3 })
+    );
+}
+
+#[test]
+fn invalid_id() {
+    for id in ["abc", "+3"] {
+        assert_eq!(
+            parse_line(&format!("CANCEL {id}")),
+            Err(ParseError::InvalidId(id.to_string()))
+        );
+    }
+}
+
+#[test]
+fn sell_is_an_unknown_command() {
+    assert_eq!(
+        parse_line("SELL 1 @ 10"),
+        Err(ParseError::UnknownCommand("SELL".to_string()))
     );
 }

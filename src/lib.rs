@@ -74,6 +74,14 @@ pub enum Reject {
     ZeroPrice,
 }
 
+// Why a cancel was rejected. `UnknownId`: the id never existed. `NotInBook`: the order
+// already left the book (filled or cancelled; the current index does not tell which).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CancelReject {
+    UnknownId,
+    NotInBook,
+}
+
 #[derive(Debug, Clone)]
 pub struct OrderBook {
     bids: BTreeMap<Price, VecDeque<RestingOrder>>,
@@ -202,6 +210,48 @@ impl OrderBook {
             }
         }
         Ok((id, trades))
+    }
+
+    /// Removes a resting order from the book and returns its remaining quantity.
+    ///
+    /// Errors: [`CancelReject::UnknownId`] if the id was never issued, and
+    /// [`CancelReject::NotInBook`] if the order already left the book (filled or
+    /// cancelled). Cancelling issues no id, produces no trades and leaves every other
+    /// order untouched.
+    pub fn cancel(&mut self, id: Id) -> Result<Qt, CancelReject> {
+        let Some(slot) = self.index.get_mut(id.0 as usize) else {
+            return Err(CancelReject::UnknownId);
+        };
+        let Some((side, price)) = *slot else {
+            return Err(CancelReject::NotInBook);
+        };
+
+        let levels = match side {
+            Side::Buy => &mut self.bids,
+            Side::Sell => &mut self.asks,
+        };
+        // Linear search within the level; the index only knows side and price.
+        let removed = levels.get_mut(&price).and_then(|queue| {
+            let pos = queue.iter().position(|order| order.id == id)?;
+            queue.remove(pos)
+        });
+        let Some(order) = removed else {
+            // The index says the order rests here, so this is a broken invariant.
+            debug_assert!(
+                false,
+                "index says order {} rests at {side:?} {}, but it is not in that level",
+                id.0, price.0
+            );
+            return Err(CancelReject::NotInBook);
+        };
+
+        // No empty levels, so best_bid/best_ask stay correct.
+        if levels.get(&price).is_some_and(|queue| queue.is_empty()) {
+            levels.remove(&price);
+        }
+        // The order left the book.
+        *slot = None;
+        Ok(order.qt)
     }
 }
 

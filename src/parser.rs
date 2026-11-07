@@ -1,30 +1,42 @@
-//! Parser for input lines in the `SIDE QTY @ PRICE` format.
+//! Parser for input lines: `BID|ASK QTY @ PRICE` (submit a limit order) and
+//! `CANCEL ID` (cancel a resting order).
 //!
 //! It only checks syntax: business validation (zero quantity or price, tick
-//! size etc.) does not happen here.
+//! size, unknown ids etc.) does not happen here.
 
 use std::fmt;
 
-use crate::{Price, Qt, Side};
+use crate::{Id, Price, Qt, Side};
+
+/// One parsed input line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Command {
+    Submit { side: Side, price: Price, qt: Qt },
+    Cancel(Id),
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParseError {
     WrongTokenCount { found: usize },
-    UnknownSide(String),
+    UnknownCommand(String),
     MissingAt(String),
     InvalidQuantity(String),
     InvalidPrice(String),
     TooManyDecimals(String),
+    InvalidId(String),
 }
 
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ParseError::WrongTokenCount { found } => {
-                write!(f, "expected 4 tokens (SIDE QTY @ PRICE), found {found}")
+                write!(
+                    f,
+                    "expected SIDE QTY @ PRICE or CANCEL ID, found {found} tokens"
+                )
             }
-            ParseError::UnknownSide(token) => {
-                write!(f, "unknown side '{token}' (use BID or ASK)")
+            ParseError::UnknownCommand(token) => {
+                write!(f, "unknown command '{token}' (use BID, ASK or CANCEL)")
             }
             ParseError::MissingAt(token) => write!(f, "expected '@', found '{token}'"),
             ParseError::InvalidQuantity(token) => {
@@ -34,26 +46,39 @@ impl fmt::Display for ParseError {
             ParseError::TooManyDecimals(token) => {
                 write!(f, "price '{token}' has more than 2 decimal places")
             }
+            ParseError::InvalidId(token) => write!(f, "invalid id '{token}' (unsigned integer)"),
         }
     }
 }
 
 impl std::error::Error for ParseError {}
 
-/// Parses a `BID|ASK QTY @ PRICE` line into its side, price and quantity.
+/// Parses one input line into a [`Command`].
 ///
-/// Building the [`Order`](crate::Order), including its id, is up to the caller.
+/// - `BID|ASK QTY @ PRICE` becomes [`Command::Submit`]. The price accepts up to 2
+///   decimal places and is stored in cents: `5` becomes `Price(500)` and `1.1`
+///   becomes `Price(110)`.
+/// - `CANCEL ID` becomes [`Command::Cancel`].
 ///
-/// The price accepts up to 2 decimal places and is stored in cents:
-/// `5` becomes `Price(500)` and `1.1` becomes `Price(110)`.
-pub fn parse_line(line: &str) -> Result<(Side, Price, Qt), ParseError> {
+/// Keywords are uppercase only; the order id of a submit is assigned by the book.
+pub fn parse_line(line: &str) -> Result<Command, ParseError> {
     let tokens: Vec<&str> = line.split_whitespace().collect();
-    let [side, qt, at, price] = tokens[..] else {
-        return Err(ParseError::WrongTokenCount {
-            found: tokens.len(),
-        });
+    let wrong_count = || ParseError::WrongTokenCount {
+        found: tokens.len(),
     };
 
+    // The first token picks the format; the CANCEL arms come first so a 4-token
+    // CANCEL line is a token-count error, not an unknown command.
+    match tokens[..] {
+        ["CANCEL", id] => parse_id(id).map(Command::Cancel),
+        ["CANCEL", ..] => Err(wrong_count()),
+        [side, qt, at, price] => parse_submit(side, qt, at, price),
+        [] | ["BID" | "ASK", ..] => Err(wrong_count()),
+        [command, ..] => Err(ParseError::UnknownCommand(command.to_string())),
+    }
+}
+
+fn parse_submit(side: &str, qt: &str, at: &str, price: &str) -> Result<Command, ParseError> {
     let side = parse_side(side)?;
     let qt = parse_qt(qt)?;
     if at != "@" {
@@ -61,25 +86,35 @@ pub fn parse_line(line: &str) -> Result<(Side, Price, Qt), ParseError> {
     }
     let price = parse_price(price)?;
 
-    Ok((side, price, qt))
+    Ok(Command::Submit { side, price, qt })
 }
 
 fn parse_side(token: &str) -> Result<Side, ParseError> {
     match token {
         "BID" => Ok(Side::Buy),
         "ASK" => Ok(Side::Sell),
-        _ => Err(ParseError::UnknownSide(token.to_string())),
+        _ => Err(ParseError::UnknownCommand(token.to_string())),
     }
 }
 
 fn parse_qt(token: &str) -> Result<Qt, ParseError> {
-    let invalid = || ParseError::InvalidQuantity(token.to_string());
+    parse_unsigned(token)
+        .map(Qt)
+        .ok_or_else(|| ParseError::InvalidQuantity(token.to_string()))
+}
 
-    // `u64::from_str` accepts "+5", so the digits are checked first.
+fn parse_id(token: &str) -> Result<Id, ParseError> {
+    parse_unsigned(token)
+        .map(Id)
+        .ok_or_else(|| ParseError::InvalidId(token.to_string()))
+}
+
+// `u64::from_str` accepts "+5", so the digits are checked first.
+fn parse_unsigned(token: &str) -> Option<u64> {
     if !is_digits(token) {
-        return Err(invalid());
+        return None;
     }
-    token.parse().map(Qt).map_err(|_| invalid())
+    token.parse().ok()
 }
 
 // Read as text, never through f64: 0.29 * 100.0 gives 28.999...

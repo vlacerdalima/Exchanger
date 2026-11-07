@@ -1,8 +1,0 @@
----
-source: tests/cli.rs
-expression: "String::from_utf8_lossy(&output.stdout)"
----
-(Buy, Price(500), Qt(10))
-(Sell, Price(110), Qt(3))
-(Buy, Price(29), Qt(7))
-(Sell, Price(0), Qt(0))
