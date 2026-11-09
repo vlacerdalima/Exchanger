@@ -5,30 +5,42 @@ use std::collections::{BTreeMap, VecDeque, btree_map::OccupiedEntry};
 
 pub mod parser;
 
+/// Side of an order: buy (bid) or sell (ask).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Side {
+    /// Buy order, rests on the bid side.
     Buy,
+    /// Sell order, rests on the ask side.
     Sell,
 }
 
+/// Price in cents (2 decimal places as an integer): `Price(9950)` is 99.50.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Price(pub u64);
 
+/// Quantity, in whole units.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Qt(pub u64);
 
+/// Order id, assigned sequentially by the book to each accepted order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Id(pub u64);
 
+/// An order with all of its fields: side, price, quantity and id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Order {
+    /// Side of the order.
     pub side: Side,
+    /// Limit price.
     pub price: Price,
+    /// Quantity.
     pub qt: Qt,
+    /// Id of the order.
     pub id: Id,
 }
 
 impl Order {
+    /// Builds an order from its fields.
     pub fn new(side: Side, price: Price, qt: Qt, id: Id) -> Self {
         Order {
             side,
@@ -39,7 +51,7 @@ impl Order {
     }
 }
 
-// Queue entry of a price level; side and price come from the structure, so they are not stored.
+/// Queue entry of a price level; side and price come from the structure, so they are not stored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RestingOrder {
     id: Id,
@@ -58,36 +70,47 @@ impl RestingOrder {
     }
 }
 
-// One trade per maker/taker pair; `price` is always the maker's price.
+/// One trade per maker/taker pair; `price` is always the maker's price.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Trade {
+    /// Order that was resting in the book.
     pub maker: Id,
+    /// Incoming order that crossed the book.
     pub taker: Id,
+    /// Execution price (the maker's price).
     pub price: Price,
+    /// Quantity traded.
     pub qt: Qt,
 }
 
-// Why an order was rejected before entering the engine.
+/// Why an order was rejected before entering the engine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reject {
+    /// Quantity is zero.
     ZeroQuantity,
+    /// Price is zero.
     ZeroPrice,
 }
 
-// Why a cancel was rejected. `UnknownId`: the id was never issued. `AlreadyFilled` and
-// `AlreadyCancelled`: the order already left the book for that reason.
+/// Why a cancel was rejected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CancelReject {
+    /// The id was never issued.
     UnknownId,
+    /// The order already left the book by trading completely.
     AlreadyFilled,
+    /// The order was already cancelled.
     AlreadyCancelled,
 }
 
 /// Lifecycle status of an order, as shown by [`OrderBook::view`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {
+    /// Still in the book, possibly partially filled.
     Resting,
+    /// Traded completely.
     Filled,
+    /// Cancelled, possibly after a partial fill.
     Cancelled,
 }
 
@@ -111,9 +134,10 @@ pub struct OrderView {
     pub status: Status,
 }
 
-// Why a view was rejected. `UnknownId`: the id was never issued.
+/// Why a view was rejected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ViewError {
+    /// The id was never issued.
     UnknownId,
 }
 
@@ -134,6 +158,7 @@ enum OrderState {
     Cancelled { remaining: Qt },
 }
 
+/// Limit order book for a single market, with price-time priority matching.
 #[derive(Debug, Clone)]
 pub struct OrderBook {
     bids: BTreeMap<Price, VecDeque<RestingOrder>>,
@@ -143,6 +168,7 @@ pub struct OrderBook {
 }
 
 impl OrderBook {
+    /// Creates an empty book.
     pub fn new() -> Self {
         OrderBook {
             bids: BTreeMap::new(),
@@ -365,7 +391,8 @@ impl OrderBook {
             side,
             price,
             original,
-            executed: Qt(original.0 - left.0),
+            // Saturates instead of wrapping in release if the invariant ever breaks.
+            executed: Qt(original.0.saturating_sub(left.0)),
             remaining,
             status,
         })

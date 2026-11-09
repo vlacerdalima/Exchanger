@@ -11,19 +11,40 @@ use crate::{Id, Price, Qt, Side};
 /// One parsed input line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Command {
-    Submit { side: Side, price: Price, qt: Qt },
+    /// `BID|ASK QTY @ PRICE`: submit a limit order.
+    Submit {
+        /// `BID` is buy, `ASK` is sell.
+        side: Side,
+        /// Limit price, in cents.
+        price: Price,
+        /// Quantity.
+        qt: Qt,
+    },
+    /// `CANCEL ID`: cancel a resting order.
     Cancel(Id),
+    /// `VIEW ID`: show an order's state.
     View(Id),
 }
 
+/// Why a line could not be parsed; each variant carries the offending input.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParseError {
-    WrongTokenCount { found: usize },
+    /// The line has the wrong number of whitespace-separated tokens.
+    WrongTokenCount {
+        /// Number of tokens found.
+        found: usize,
+    },
+    /// The first token is not `BID`, `ASK`, `CANCEL` or `VIEW`.
     UnknownCommand(String),
+    /// The third token of a submit is not `@`.
     MissingAt(String),
+    /// The quantity is not an unsigned integer that fits in `u64`.
     InvalidQuantity(String),
+    /// The price is not a non-negative decimal that fits in `u64` cents.
     InvalidPrice(String),
+    /// The price has more than 2 decimal places.
     TooManyDecimals(String),
+    /// The id is not an unsigned integer that fits in `u64`.
     InvalidId(String),
 }
 

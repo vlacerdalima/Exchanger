@@ -1,3 +1,5 @@
+//! CLI: reads a file of commands, one per line, and prints the engine's events.
+
 use std::{env, fs};
 
 use anyhow::{Context, Result};

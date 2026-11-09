@@ -2,6 +2,12 @@
 name = "matching-engine"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.85"
+description = "Single-market limit order book and matching engine with price-time priority"
+repository = "https://github.com/vlacerdalima/Exchanger"
+license = "MIT"
+keywords = ["matching-engine", "order-book", "exchange", "trading", "limit-order"]
+categories = ["finance", "data-structures"]
 
 [dependencies]
 anyhow = "1.0.104"
