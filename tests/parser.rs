@@ -159,3 +159,34 @@ fn sell_is_an_unknown_command() {
         Err(ParseError::UnknownCommand("SELL".to_string()))
     );
 }
+
+// VIEW
+
+#[test]
+fn view_command() {
+    assert_eq!(parse_line("VIEW 3"), Ok(Command::View(Id(3))));
+}
+
+#[test]
+fn view_without_id() {
+    assert_eq!(
+        parse_line("VIEW"),
+        Err(ParseError::WrongTokenCount { found: 1 })
+    );
+}
+
+#[test]
+fn view_with_invalid_id() {
+    assert_eq!(
+        parse_line("VIEW x"),
+        Err(ParseError::InvalidId("x".to_string()))
+    );
+}
+
+#[test]
+fn unknown_command_with_wrong_token_count() {
+    assert_eq!(
+        parse_line("BUY 1 5"),
+        Err(ParseError::UnknownCommand("BUY".to_string()))
+    );
+}

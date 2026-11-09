@@ -1,4 +1,6 @@
-use matching_engine::{CancelReject, Id, OrderBook, Price, Qt, Reject, Side, Trade};
+use matching_engine::{
+    CancelReject, Id, OrderBook, OrderView, Price, Qt, Reject, Side, Status, Trade, ViewError,
+};
 
 // `RestingOrder` cannot be built outside the crate, so the helpers below turn it
 // into plain values that `assert_eq!` can compare.
@@ -595,7 +597,7 @@ fn cancel_twice() {
     let mut book = base_book();
 
     assert!(book.cancel(Id(1)).is_ok());
-    assert_eq!(book.cancel(Id(1)), Err(CancelReject::NotInBook));
+    assert_eq!(book.cancel(Id(1)), Err(CancelReject::AlreadyCancelled));
 }
 
 #[test]
@@ -603,7 +605,7 @@ fn cancel_filled_maker() {
     let mut book = base_book();
     book.submit(Side::Buy, Price(100), Qt(5)).unwrap();
 
-    assert_eq!(book.cancel(Id(1)), Err(CancelReject::NotInBook));
+    assert_eq!(book.cancel(Id(1)), Err(CancelReject::AlreadyFilled));
 }
 
 #[test]
@@ -612,7 +614,7 @@ fn cancel_fully_filled_taker() {
     let (id, _) = book.submit(Side::Buy, Price(100), Qt(5)).unwrap();
     assert_eq!(id, Id(4));
 
-    assert_eq!(book.cancel(Id(4)), Err(CancelReject::NotInBook));
+    assert_eq!(book.cancel(Id(4)), Err(CancelReject::AlreadyFilled));
 }
 
 #[test]
@@ -631,4 +633,112 @@ fn cancelled_order_does_not_match() {
 
     assert_eq!(id, Id(4));
     assert_eq!(trades, vec![trade(2, 4, 100, 2)]);
+}
+
+// view
+
+fn order_view(
+    id: u64,
+    side: Side,
+    price: u64,
+    original: u64,
+    executed: u64,
+    remaining: u64,
+    status: Status,
+) -> OrderView {
+    OrderView {
+        id: Id(id),
+        side,
+        price: Price(price),
+        original: Qt(original),
+        executed: Qt(executed),
+        remaining: Qt(remaining),
+        status,
+    }
+}
+
+#[test]
+fn view_untouched_resting() {
+    let book = base_book();
+
+    assert_eq!(
+        book.view(Id(1)),
+        Ok(order_view(1, Side::Sell, 100, 5, 0, 5, Status::Resting))
+    );
+}
+
+#[test]
+fn view_partially_filled_maker() {
+    let mut book = base_book();
+    book.submit(Side::Buy, Price(101), Qt(9)).unwrap();
+
+    assert_eq!(
+        book.view(Id(3)),
+        Ok(order_view(3, Side::Sell, 101, 3, 2, 1, Status::Resting))
+    );
+}
+
+#[test]
+fn view_filled_maker() {
+    let mut book = base_book();
+    book.submit(Side::Buy, Price(101), Qt(9)).unwrap();
+
+    assert_eq!(
+        book.view(Id(1)),
+        Ok(order_view(1, Side::Sell, 100, 5, 5, 0, Status::Filled))
+    );
+}
+
+#[test]
+fn view_fully_filled_taker() {
+    let mut book = base_book();
+    let (id, _) = book.submit(Side::Buy, Price(100), Qt(5)).unwrap();
+    assert_eq!(id, Id(4));
+
+    assert_eq!(
+        book.view(Id(4)),
+        Ok(order_view(4, Side::Buy, 100, 5, 5, 0, Status::Filled))
+    );
+}
+
+#[test]
+fn view_resting_taker_remainder() {
+    let mut book = base_book();
+    let (id, _) = book.submit(Side::Sell, Price(98), Qt(6)).unwrap();
+    assert_eq!(id, Id(4));
+
+    assert_eq!(
+        book.view(Id(4)),
+        Ok(order_view(4, Side::Sell, 98, 6, 4, 2, Status::Resting))
+    );
+}
+
+#[test]
+fn view_cancelled_after_partial_fill() {
+    let mut book = base_book();
+    book.submit(Side::Buy, Price(101), Qt(9)).unwrap();
+    book.cancel(Id(3)).unwrap();
+
+    assert_eq!(
+        book.view(Id(3)),
+        Ok(order_view(3, Side::Sell, 101, 3, 2, 0, Status::Cancelled))
+    );
+}
+
+#[test]
+fn view_cancelled_untouched() {
+    let mut book = base_book();
+    book.cancel(Id(1)).unwrap();
+
+    assert_eq!(
+        book.view(Id(1)),
+        Ok(order_view(1, Side::Sell, 100, 5, 0, 0, Status::Cancelled))
+    );
+}
+
+#[test]
+fn view_unknown_id() {
+    let book = base_book();
+
+    assert_eq!(book.view(Id(99)), Err(ViewError::UnknownId));
 }

@@ -74,20 +74,72 @@ pub enum Reject {
     ZeroPrice,
 }
 
-// Why a cancel was rejected. `UnknownId`: the id never existed. `NotInBook`: the order
-// already left the book (filled or cancelled; the current index does not tell which).
+// Why a cancel was rejected. `UnknownId`: the id was never issued. `AlreadyFilled` and
+// `AlreadyCancelled`: the order already left the book for that reason.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CancelReject {
     UnknownId,
-    NotInBook,
+    AlreadyFilled,
+    AlreadyCancelled,
+}
+
+/// Lifecycle status of an order, as shown by [`OrderBook::view`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Status {
+    Resting,
+    Filled,
+    Cancelled,
+}
+
+/// Snapshot of one order, returned by [`OrderBook::view`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OrderView {
+    /// Id assigned when the order was accepted.
+    pub id: Id,
+    /// Side the order was submitted on.
+    pub side: Side,
+    /// Limit price of the order (not the price of its trades).
+    pub price: Price,
+    /// Quantity the order was submitted with.
+    pub original: Qt,
+    /// Quantity already traded: `original - remaining` while resting, everything that
+    /// traded before the cancel once cancelled.
+    pub executed: Qt,
+    /// Quantity still resting in the book; 0 once filled or cancelled.
+    pub remaining: Qt,
+    /// Where the order is in its lifecycle.
+    pub status: Status,
+}
+
+// Why a view was rejected. `UnknownId`: the id was never issued.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ViewError {
+    UnknownId,
+}
+
+// Fixed order data always stays in the record; executed and remaining are derived by
+// subtraction. The only quantity that changes on each trade is the queue entry's qt.
+#[derive(Debug, Clone, Copy)]
+struct OrderRecord {
+    side: Side,
+    price: Price,
+    original: Qt,
+    state: OrderState,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum OrderState {
+    Resting,
+    Filled,
+    Cancelled { remaining: Qt },
 }
 
 #[derive(Debug, Clone)]
 pub struct OrderBook {
     bids: BTreeMap<Price, VecDeque<RestingOrder>>,
     asks: BTreeMap<Price, VecDeque<RestingOrder>>,
-    // Support index, positioned by Id.0; None = order that already left the book.
-    index: Vec<Option<(Side, Price)>>,
+    // One record per accepted order, positioned by Id.0.
+    index: Vec<OrderRecord>,
 }
 
 impl OrderBook {
@@ -149,9 +201,8 @@ impl OrderBook {
             return Err(Reject::ZeroPrice);
         }
 
+        // The record is pushed after matching, so this is the next free slot.
         let id = Id(self.index.len() as u64);
-        // Every order gets an index slot, even if it fills completely.
-        self.index.push(None);
         let mut remaining = qt;
         let mut trades = Vec::new();
 
@@ -186,11 +237,11 @@ impl OrderBook {
             remaining.0 -= fill;
             maker.qt.0 -= fill;
             if maker.qt.0 == 0 {
-                // A filled maker leaves the book and the index.
+                // A filled maker leaves the book; its record keeps the history.
                 let maker_id = maker.id;
                 queue.pop_front();
-                if let Some(slot) = self.index.get_mut(maker_id.0 as usize) {
-                    *slot = None;
+                if let Some(record) = self.index.get_mut(maker_id.0 as usize) {
+                    record.state = OrderState::Filled;
                 }
             }
             // No empty levels, so best_bid/best_ask stay correct.
@@ -203,55 +254,126 @@ impl OrderBook {
         }
 
         // Whatever is left rests at the order's own limit price.
-        if remaining.0 > 0 {
+        let state = if remaining.0 > 0 {
             self.rest(id, side, price, remaining);
-            if let Some(slot) = self.index.get_mut(id.0 as usize) {
-                *slot = Some((side, price));
-            }
-        }
+            OrderState::Resting
+        } else {
+            OrderState::Filled
+        };
+        // Every accepted order gets a record, already with its final state.
+        self.index.push(OrderRecord {
+            side,
+            price,
+            original: qt,
+            state,
+        });
         Ok((id, trades))
     }
 
     /// Removes a resting order from the book and returns its remaining quantity.
     ///
-    /// Errors: [`CancelReject::UnknownId`] if the id was never issued, and
-    /// [`CancelReject::NotInBook`] if the order already left the book (filled or
-    /// cancelled). Cancelling issues no id, produces no trades and leaves every other
-    /// order untouched.
+    /// Errors: [`CancelReject::UnknownId`] if the id was never issued,
+    /// [`CancelReject::AlreadyFilled`] if the order traded completely and
+    /// [`CancelReject::AlreadyCancelled`] if it was cancelled before. Cancelling issues no
+    /// id, produces no trades and leaves every other order untouched.
     pub fn cancel(&mut self, id: Id) -> Result<Qt, CancelReject> {
-        let Some(slot) = self.index.get_mut(id.0 as usize) else {
+        let Some(&OrderRecord {
+            side, price, state, ..
+        }) = self.index.get(id.0 as usize)
+        else {
             return Err(CancelReject::UnknownId);
         };
-        let Some((side, price)) = *slot else {
-            return Err(CancelReject::NotInBook);
-        };
+        match state {
+            OrderState::Resting => {}
+            OrderState::Filled => return Err(CancelReject::AlreadyFilled),
+            OrderState::Cancelled { .. } => return Err(CancelReject::AlreadyCancelled),
+        }
 
+        // Linear search within the level; the record only knows side and price.
+        let pos = self.position_in_level(side, price, id);
         let levels = match side {
             Side::Buy => &mut self.bids,
             Side::Sell => &mut self.asks,
         };
-        // Linear search within the level; the index only knows side and price.
-        let removed = levels.get_mut(&price).and_then(|queue| {
-            let pos = queue.iter().position(|order| order.id == id)?;
-            queue.remove(pos)
-        });
+        let removed = pos.and_then(|pos| levels.get_mut(&price)?.remove(pos));
         let Some(order) = removed else {
-            // The index says the order rests here, so this is a broken invariant.
+            // The record says the order is resting here, so this is a broken invariant.
             debug_assert!(
                 false,
-                "index says order {} rests at {side:?} {}, but it is not in that level",
+                "record says order {} is resting at {side:?} {}, but it is not in that level",
                 id.0, price.0
             );
-            return Err(CancelReject::NotInBook);
+            return Err(CancelReject::AlreadyFilled);
         };
 
         // No empty levels, so best_bid/best_ask stay correct.
         if levels.get(&price).is_some_and(|queue| queue.is_empty()) {
             levels.remove(&price);
         }
-        // The order left the book.
-        *slot = None;
+        // Keep what was left, so view can derive the executed quantity.
+        if let Some(record) = self.index.get_mut(id.0 as usize) {
+            record.state = OrderState::Cancelled {
+                remaining: order.qt,
+            };
+        }
         Ok(order.qt)
+    }
+
+    /// Current state of an order: its fixed data plus executed and remaining quantities.
+    ///
+    /// Error: [`ViewError::UnknownId`] if the id was never issued.
+    pub fn view(&self, id: Id) -> Result<OrderView, ViewError> {
+        let &OrderRecord {
+            side,
+            price,
+            original,
+            state,
+        } = self.index.get(id.0 as usize).ok_or(ViewError::UnknownId)?;
+
+        // `left` is what did not trade: in the book while resting, cancelled otherwise.
+        let (status, left, remaining) = match state {
+            OrderState::Resting => {
+                let in_queue = self
+                    .position_in_level(side, price, id)
+                    .and_then(|pos| self.level(side, price).nth(pos))
+                    .map(|order| order.qt);
+                let Some(qt) = in_queue else {
+                    // The record says the order is resting here, so this is a broken invariant.
+                    debug_assert!(
+                        false,
+                        "record says order {} is resting at {side:?} {}, but it is not in that level",
+                        id.0, price.0
+                    );
+                    return Ok(OrderView {
+                        id,
+                        side,
+                        price,
+                        original,
+                        executed: original,
+                        remaining: Qt(0),
+                        status: Status::Resting,
+                    });
+                };
+                (Status::Resting, qt, qt)
+            }
+            OrderState::Filled => (Status::Filled, Qt(0), Qt(0)),
+            OrderState::Cancelled { remaining } => (Status::Cancelled, remaining, Qt(0)),
+        };
+
+        Ok(OrderView {
+            id,
+            side,
+            price,
+            original,
+            executed: Qt(original.0 - left.0),
+            remaining,
+            status,
+        })
+    }
+
+    // Position of `id` in the queue of level (side, price); None if it is not there.
+    fn position_in_level(&self, side: Side, price: Price, id: Id) -> Option<usize> {
+        self.level(side, price).position(|order| order.id == id)
     }
 }
 

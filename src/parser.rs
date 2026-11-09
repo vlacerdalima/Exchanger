@@ -1,5 +1,5 @@
-//! Parser for input lines: `BID|ASK QTY @ PRICE` (submit a limit order) and
-//! `CANCEL ID` (cancel a resting order).
+//! Parser for input lines: `BID|ASK QTY @ PRICE` (submit a limit order),
+//! `CANCEL ID` (cancel a resting order) and `VIEW ID` (show an order's state).
 //!
 //! It only checks syntax: business validation (zero quantity or price, tick
 //! size, unknown ids etc.) does not happen here.
@@ -13,6 +13,7 @@ use crate::{Id, Price, Qt, Side};
 pub enum Command {
     Submit { side: Side, price: Price, qt: Qt },
     Cancel(Id),
+    View(Id),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,11 +33,14 @@ impl fmt::Display for ParseError {
             ParseError::WrongTokenCount { found } => {
                 write!(
                     f,
-                    "expected SIDE QTY @ PRICE or CANCEL ID, found {found} tokens"
+                    "expected SIDE QTY @ PRICE, CANCEL ID or VIEW ID, found {found} tokens"
                 )
             }
             ParseError::UnknownCommand(token) => {
-                write!(f, "unknown command '{token}' (use BID, ASK or CANCEL)")
+                write!(
+                    f,
+                    "unknown command '{token}' (use BID, ASK, CANCEL or VIEW)"
+                )
             }
             ParseError::MissingAt(token) => write!(f, "expected '@', found '{token}'"),
             ParseError::InvalidQuantity(token) => {
@@ -59,6 +63,7 @@ impl std::error::Error for ParseError {}
 ///   decimal places and is stored in cents: `5` becomes `Price(500)` and `1.1`
 ///   becomes `Price(110)`.
 /// - `CANCEL ID` becomes [`Command::Cancel`].
+/// - `VIEW ID` becomes [`Command::View`].
 ///
 /// Keywords are uppercase only; the order id of a submit is assigned by the book.
 pub fn parse_line(line: &str) -> Result<Command, ParseError> {
@@ -67,11 +72,12 @@ pub fn parse_line(line: &str) -> Result<Command, ParseError> {
         found: tokens.len(),
     };
 
-    // The first token picks the format; the CANCEL arms come first so a 4-token
-    // CANCEL line is a token-count error, not an unknown command.
+    // The first token picks the format; the CANCEL and VIEW arms come first so a
+    // 4-token CANCEL or VIEW line is a token-count error, not an unknown command.
     match tokens[..] {
         ["CANCEL", id] => parse_id(id).map(Command::Cancel),
-        ["CANCEL", ..] => Err(wrong_count()),
+        ["VIEW", id] => parse_id(id).map(Command::View),
+        ["CANCEL" | "VIEW", ..] => Err(wrong_count()),
         [side, qt, at, price] => parse_submit(side, qt, at, price),
         [] | ["BID" | "ASK", ..] => Err(wrong_count()),
         [command, ..] => Err(ParseError::UnknownCommand(command.to_string())),
